@@ -1,2 +1,2 @@
-# applicerad-ai-inl1
+# Lindas Lustfyllda Bud & Åkeri
 Lindas Lustfyllda Bud &amp; Åkeri
