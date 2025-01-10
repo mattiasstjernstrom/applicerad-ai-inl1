@@ -7,12 +7,10 @@ from collections import defaultdict
 
 MAX_WEIGHT = 800
 NUM_TRUCKS = 10
-NUM_ITER = 100
-WEIGHT_PENALTY = 0.01
-DEADLINE_PRIORITY = 1.5
 NO_IMPROVEMENT_LIMIT = 200
-RESTART_LIMIT = 10
-IMPROVEMENT_THRESHOLD = 0.0001
+POPULATION_SIZE = 20
+NUM_GENERATIONS = 100
+MUTATION_RATE = 0.2
 
 
 def read_data(file_path: Path) -> list:
@@ -31,7 +29,8 @@ def read_data(file_path: Path) -> list:
 
 def allocate_packages(packages: list) -> dict:
     packages = sorted(
-        packages, key=lambda x: (x["Deadline"] <= 0, -x["Förtjänst"], x["Deadline"])
+        packages,
+        key=lambda x: (x["Deadline"] <= 0, -x["Förtjänst"], x["Deadline"]),
     )
     trucks = defaultdict(list)
     truck_weights = [0] * NUM_TRUCKS
@@ -46,34 +45,28 @@ def allocate_packages(packages: list) -> dict:
     return trucks
 
 
-def calculate_fitness(trucks: dict, remaining_packages: list) -> float:
+def calculate_fitness(trucks, remaining_packages):
     total_profit = sum(p["Förtjänst"] for truck in trucks.values() for p in truck)
     total_penalty = sum(
         -(p["Deadline"] ** 2) for p in remaining_packages if p["Deadline"] < 0
     )
-    unused_capacity = sum(
-        MAX_WEIGHT - sum(p["Vikt"] for p in truck) for truck in trucks.values()
-    )
-    return total_profit + total_penalty - (WEIGHT_PENALTY * unused_capacity)
+    return total_profit + total_penalty
 
 
-def mutate_solution(trucks, remaining_packages, mutation_rate=0.1):
-    """
-    Applicerar mutation på en lösning genom att flytta paket slumpmässigt.
-    """
-    all_packages = sum(trucks.values(), []) + remaining_packages
-    num_packages = len(all_packages)
+def initialize_population(packages):
+    population = []
+    for _ in range(POPULATION_SIZE):
+        random.shuffle(packages)
+        trucks = allocate_packages(packages)
+        remaining_packages = [p for p in packages if p not in sum(trucks.values(), [])]
+        fitness = calculate_fitness(trucks, remaining_packages)
+        population.append((fitness, trucks, remaining_packages))
+    return population
 
-    if random.random() < mutation_rate:
-        # Flytta ett slumpmässigt paket från en bil till lagret
-        truck_id = random.choice(list(trucks.keys()))
-        if trucks[truck_id]:
-            package = trucks[truck_id].pop(random.randint(0, len(trucks[truck_id]) - 1))
-            remaining_packages.append(package)
 
-    if random.random() < mutation_rate:
-        # Flytta ett slumpmässigt paket från lagret till en bil
-        if remaining_packages:
+def mutate_solution(trucks, remaining_packages):
+    for _ in range(int(len(remaining_packages) * MUTATION_RATE)):
+        if random.random() < 0.5 and remaining_packages:
             package = remaining_packages.pop(
                 random.randint(0, len(remaining_packages) - 1)
             )
@@ -84,126 +77,93 @@ def mutate_solution(trucks, remaining_packages, mutation_rate=0.1):
                 ):
                     trucks[truck_id].append(package)
                     break
-
+        else:
+            truck_id = random.choice(list(trucks.keys()))
+            if trucks[truck_id]:
+                package = trucks[truck_id].pop(
+                    random.randint(0, len(trucks[truck_id]) - 1)
+                )
+                remaining_packages.append(package)
     return trucks, remaining_packages
 
 
-def optimize_packages_with_restart(packages: list):
-    best_fitness = float("-inf")
-    best_solution = None
-    stagnation_counter = 0
-    restart_counter = 0
+def select_parents(population):
+    return sorted(population, key=lambda x: x[0], reverse=True)[:5]
 
-    for iteration in range(NUM_ITER):
-        if best_solution:
-            trucks, remaining_packages = best_solution
-            all_packages = sum(trucks.values(), []) + remaining_packages
-            if iteration < 50:
-                random.shuffle(all_packages)
-            else:
-                all_packages = sorted(
-                    all_packages, key=lambda x: (-x["Förtjänst"], x["Deadline"])
-                )
+
+def crossover_solution(parent1, parent2):
+    trucks1, remaining1 = parent1[1], parent1[2]
+    trucks2, remaining2 = parent2[1], parent2[2]
+    new_trucks = defaultdict(list)
+
+    for truck_id in range(NUM_TRUCKS):
+        if random.random() < 0.5:
+            new_trucks[truck_id] = trucks1[truck_id]
         else:
-            all_packages = packages
+            new_trucks[truck_id] = trucks2[truck_id]
 
-        trucks = allocate_packages(all_packages)
-        remaining_packages = [
-            p for p in all_packages if p not in sum(trucks.values(), [])
-        ]
+    new_remaining = {p["Paket_id"]: p for p in remaining1 + remaining2}.values()
+    return new_trucks, list(new_remaining)
 
-        # Applicera mutation på lösningen
-        trucks, remaining_packages = mutate_solution(
-            trucks, remaining_packages, mutation_rate=0.1
-        )
 
-        fitness = calculate_fitness(trucks, remaining_packages)
+def create_next_generation(parents):
+    next_generation = []
+    while len(next_generation) < POPULATION_SIZE:
+        parent1, parent2 = random.sample(parents, 2)
+        child_trucks, child_remaining = crossover_solution(parent1, parent2)
+        child_trucks, child_remaining = mutate_solution(child_trucks, child_remaining)
+        child_fitness = calculate_fitness(child_trucks, child_remaining)
+        next_generation.append((child_fitness, child_trucks, child_remaining))
+    return next_generation
 
-        if fitness > best_fitness:
-            best_fitness = fitness
-            best_solution = (trucks, remaining_packages)
+
+def optimize_with_generations(packages):
+    population = initialize_population(packages)
+    best_solution = max(population, key=lambda x: x[0])
+    stagnation_counter = 0
+
+    fitness_history = []
+
+    for generation in range(NUM_GENERATIONS):
+        parents = select_parents(population)
+        population = create_next_generation(parents)
+
+        current_best = max(population, key=lambda x: x[0])
+        if current_best[0] > best_solution[0]:
+            best_solution = current_best
             stagnation_counter = 0
         else:
             stagnation_counter += 1
 
-        print(f"Iteration {iteration + 1}: Best Fitness = {best_fitness}")
+        fitness_history.append(best_solution[0])
+        print(f"Generation {generation + 1}: Best Fitness = {best_solution[0]}")
 
         if stagnation_counter >= NO_IMPROVEMENT_LIMIT:
-            print(
-                f"Stagnation efter {iteration + 1} generationer. Startar om population..."
-            )
-            random.shuffle(packages)
-            stagnation_counter = 0
-            restart_counter += 1
-
-            if restart_counter >= RESTART_LIMIT:
-                print("Max antal omstarter uppnått. Avslutar optimering.")
-                break
-
-        if (
-            iteration > 10
-            and abs(fitness - best_fitness) < IMPROVEMENT_THRESHOLD * best_fitness
-        ):
-            print(
-                f"Optimeringen avstannar efter {iteration + 1} generationer (upprepade små förbättringar)."
-            )
+            print("Stagnation reached. Ending optimization.")
             break
 
-    visualize_solution(best_solution)
-    present_results(best_solution)
+    visualize_statistics(fitness_history, best_solution[1], best_solution[2])
     return best_solution
 
 
-def visualize_solution(solution):
-    trucks, _ = solution
+def visualize_statistics(fitness_history, trucks, remaining_packages):
+    plt.figure()
+    plt.plot(fitness_history, label="Fitness over Generations")
+    plt.xlabel("Generation")
+    plt.ylabel("Fitness")
+    plt.title("Fitness Improvement")
+    plt.legend()
+    plt.show()
+
     truck_weights = [sum(p["Vikt"] for p in truck) for truck in trucks.values()]
     truck_profits = [sum(p["Förtjänst"] for p in truck) for truck in trucks.values()]
 
-    ind = range(1, NUM_TRUCKS + 1)
-    width = 0.35
-
-    plt.bar(ind, truck_weights, width, label="Vikt (kg)", color="blue", alpha=0.7)
-    plt.bar(
-        [i + width for i in ind],
-        truck_profits,
-        width,
-        label="Förtjänst",
-        color="green",
-        alpha=0.7,
-    )
-    plt.title("Vikt och Förtjänst per Budbil")
-    plt.xlabel("Budbilar")
-    plt.ylabel("Värde")
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-
-def present_results(solution):
-    trucks, remaining_packages = solution
-    total_profit = sum(p["Förtjänst"] for truck in trucks.values() for p in truck)
-    total_weight = sum(p["Vikt"] for truck in trucks.values() for p in truck)
-    total_delivered = sum(len(truck) for truck in trucks.values())
-    remaining_count = len(remaining_packages)
-    total_penalty = sum(
-        -(p["Deadline"] ** 2) for p in remaining_packages if p["Deadline"] < 0
-    )
-
-    print("\nRESULTATREDOVISNING:")
-    for truck_id, truck in trucks.items():
-        truck_weight = sum(p["Vikt"] for p in truck)
-        truck_profit = sum(p["Förtjänst"] for p in truck)
-        print(
-            f"Bil {truck_id + 1}: Vikt = {truck_weight:.1f} kg, Förtjänst = {truck_profit:.1f} kr."
-        )
-
-    print(f"\n{remaining_count} st försenade varor kvar.")
-    print(f"Total daglig förtjänst: {total_profit:.1f} kr.")
-    print(f"Total straffavgift på grund av förseningar: {total_penalty:.1f} kr.")
-    print(f"Totalt levererade paket: {total_delivered} paket.")
+    print(f"Remaining Packages: {len(remaining_packages)}")
+    print(f"Total Weight: {sum(truck_weights)}")
+    print(f"Profit: {sum(truck_profits)}")
 
 
 if __name__ == "__main__":
     file_path = Path("lagerstatus.csv")
     packages = read_data(file_path)
-    optimize_packages_with_restart(packages)
+    optimize_with_generations(packages)
