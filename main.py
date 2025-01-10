@@ -7,9 +7,9 @@ from collections import defaultdict
 
 MAX_WEIGHT = 800
 NUM_TRUCKS = 10
-NO_IMPROVEMENT_LIMIT = 200
+NO_IMPROVEMENT_LIMIT = 30
 POPULATION_SIZE = 20
-NUM_GENERATIONS = 100
+NUM_GENERATIONS = 1000
 MUTATION_RATE = 0.2
 
 
@@ -33,7 +33,7 @@ def allocate_packages(packages: list) -> dict:
         key=lambda x: (x["Deadline"] <= 0, -x["Förtjänst"], x["Deadline"]),
     )
     trucks = defaultdict(list)
-    truck_weights = [0] * NUM_TRUCKS
+    truck_weights = np.zeros(NUM_TRUCKS)
 
     for package in packages:
         for truck_id in range(NUM_TRUCKS):
@@ -46,9 +46,9 @@ def allocate_packages(packages: list) -> dict:
 
 
 def calculate_fitness(trucks, remaining_packages):
-    total_profit = sum(p["Förtjänst"] for truck in trucks.values() for p in truck)
-    total_penalty = sum(
-        -(p["Deadline"] ** 2) for p in remaining_packages if p["Deadline"] < 0
+    total_profit = np.sum([p["Förtjänst"] for truck in trucks.values() for p in truck])
+    total_penalty = np.sum(
+        [-(p["Deadline"] ** 2) for p in remaining_packages if p["Deadline"] < 0]
     )
     return total_profit + total_penalty
 
@@ -65,25 +65,31 @@ def initialize_population(packages):
 
 
 def mutate_solution(trucks, remaining_packages):
+    truck_weights = np.array(
+        [sum(p["Vikt"] for p in trucks[truck_id]) for truck_id in range(NUM_TRUCKS)]
+    )
+
     for _ in range(int(len(remaining_packages) * MUTATION_RATE)):
         if random.random() < 0.5 and remaining_packages:
             package = remaining_packages.pop(
                 random.randint(0, len(remaining_packages) - 1)
             )
             for truck_id in range(NUM_TRUCKS):
-                if (
-                    sum(p["Vikt"] for p in trucks[truck_id]) + package["Vikt"]
-                    <= MAX_WEIGHT
-                ):
+                if truck_weights[truck_id] + package["Vikt"] <= MAX_WEIGHT:
                     trucks[truck_id].append(package)
+                    truck_weights[truck_id] += package["Vikt"]
                     break
+            else:
+                remaining_packages.append(package)
         else:
             truck_id = random.choice(list(trucks.keys()))
             if trucks[truck_id]:
                 package = trucks[truck_id].pop(
                     random.randint(0, len(trucks[truck_id]) - 1)
                 )
+                truck_weights[truck_id] -= package["Vikt"]
                 remaining_packages.append(package)
+
     return trucks, remaining_packages
 
 
@@ -149,45 +155,54 @@ def optimize_with_generations(packages):
 
 def visualize_statistics(fitness_history, trucks, remaining_packages):
     plt.figure()
-    plt.plot(fitness_history, label="Fitness over Generations")
+    plt.plot(fitness_history, label="Fitness över generationer", color="blue")
     plt.xlabel("Generation")
     plt.ylabel("Fitness")
-    plt.title("Fitness Improvement")
+    plt.title("Fitnessförbättring")
     plt.legend()
+    plt.grid(True)
     plt.show()
 
-    truck_weights = [sum(p["Vikt"] for p in truck) for truck in trucks.values()]
-    truck_profits = [sum(p["Förtjänst"] for p in truck) for truck in trucks.values()]
+    truck_weights = np.array(
+        [sum(p["Vikt"] for p in truck) for truck in trucks.values()]
+    )
+    truck_profits = np.array(
+        [sum(p["Förtjänst"] for p in truck) for truck in trucks.values()]
+    )
 
-    fig, ax1 = plt.subplots()
-    ax1.bar(range(NUM_TRUCKS), truck_weights, label="Weight (kg)", alpha=0.7)
-    ax1.set_xlabel("Trucks")
-    ax1.set_ylabel("Weight (kg)")
-    ax1.legend(loc="upper left")
+    x = np.arange(1, NUM_TRUCKS + 1)
+    width = 0.35
 
-    ax2 = ax1.twinx()
-    ax2.bar(range(NUM_TRUCKS), truck_profits, label="Profit", alpha=0.7, color="green")
-    ax2.set_ylabel("Profit")
-    ax2.legend(loc="upper right")
+    fig, ax = plt.subplots()
+    bars1 = ax.bar(x - width / 2, truck_weights, width, label="Vikt (kg)", color="blue")
+    bars2 = ax.bar(
+        x + width / 2, truck_profits, width, label="Förtjänst", color="green"
+    )
 
-    plt.title("Weight and Profit per Truck")
+    ax.set_xlabel("Bil")
+    ax.set_ylabel("Värde")
+    ax.set_title("Vikt och Förtjänst per Bil")
+    ax.set_xticks(x)
+    ax.legend()
+
+    plt.tight_layout()
     plt.show()
 
 
 def present_results(trucks, remaining_packages):
-    total_profit = sum(p["Förtjänst"] for truck in trucks.values() for p in truck)
-    total_weight = sum(p["Vikt"] for truck in trucks.values() for p in truck)
-    total_delivered = sum(len(truck) for truck in trucks.values())
+    total_profit = np.sum([p["Förtjänst"] for truck in trucks.values() for p in truck])
+    total_weight = np.sum([p["Vikt"] for truck in trucks.values() for p in truck])
+    total_delivered = np.sum([len(truck) for truck in trucks.values()])
     remaining_count = len(remaining_packages)
-    remaining_profit = sum(p["Förtjänst"] for p in remaining_packages)
-    total_penalty = sum(
-        -(p["Deadline"] ** 2) for p in remaining_packages if p["Deadline"] < 0
+    remaining_profit = np.sum([p["Förtjänst"] for p in remaining_packages])
+    total_penalty = np.sum(
+        [-(p["Deadline"] ** 2) for p in remaining_packages if p["Deadline"] < 0]
     )
 
     print("\nRESULT SUMMARY:")
     for truck_id, truck in trucks.items():
-        truck_weight = sum(p["Vikt"] for p in truck)
-        truck_profit = sum(p["Förtjänst"] for p in truck)
+        truck_weight = np.sum([p["Vikt"] for p in truck])
+        truck_profit = np.sum([p["Förtjänst"] for p in truck])
         print(
             f"Truck {truck_id + 1}: Weight = {truck_weight:.1f} kg, Profit = {truck_profit:.1f}"
         )
