@@ -12,7 +12,7 @@ WEIGHT_PENALTY = 0.01
 DEADLINE_PRIORITY = 1.5
 NO_IMPROVEMENT_LIMIT = 50  # Öka stagnationströskeln
 RESTART_LIMIT = 20  # Öka antal omstarter
-MUTATION_RATE = 0.5
+MUTATION_RATE = 0.2
 IMPROVEMENT_THRESHOLD = 0.0001
 
 
@@ -33,7 +33,7 @@ def read_data(file_path: Path) -> list:
 def allocate_packages(packages: list) -> dict:
     packages = sorted(
         packages,
-        key=lambda x: (x["Deadline"] <= 0, -x["Förtjänst"] * 1.5, x["Deadline"]),
+        key=lambda x: (x["Deadline"] <= 0, -x["Förtjänst"], x["Deadline"]),
     )
     trucks = defaultdict(list)
     truck_weights = [0] * NUM_TRUCKS
@@ -49,25 +49,20 @@ def allocate_packages(packages: list) -> dict:
 
 
 def fill_trucks(trucks: dict, remaining_packages: list):
-    remaining_weights = np.array([p["Vikt"] for p in remaining_packages])
-    remaining_indices = np.argsort(-remaining_weights)
+    remaining_packages = sorted(
+        remaining_packages, key=lambda x: -x["Förtjänst"]
+    )  # Prioritera hög förtjänst
 
     for truck_id, truck in trucks.items():
         truck_weight = sum(p["Vikt"] for p in truck)
         available_space = MAX_WEIGHT - truck_weight
 
-        for idx in remaining_indices:
-            if remaining_weights[idx] <= available_space:
-                package = remaining_packages[idx]
+        for package in remaining_packages[:]:  # Iterera genom en kopia av listan
+            if package["Vikt"] <= available_space:
                 trucks[truck_id].append(package)
                 available_space -= package["Vikt"]
-                remaining_weights[idx] = float("inf")  # Mark as used
+                remaining_packages.remove(package)
 
-    remaining_packages = [
-        p
-        for i, p in enumerate(remaining_packages)
-        if remaining_weights[i] != float("inf")
-    ]
     return trucks, remaining_packages
 
 
@@ -187,6 +182,7 @@ def optimize_packages_with_restart(packages: list):
             stagnation_counter += 1
 
         print(f"Iteration {iteration + 1}: Best Fitness = {best_fitness}")
+        print(f"Truck weights: {[sum(p['Vikt'] for p in trucks[t]) for t in trucks]}\n")
 
         if stagnation_counter >= NO_IMPROVEMENT_LIMIT:
             print(
@@ -259,14 +255,12 @@ def present_results(solution):
         truck_weight = sum(p["Vikt"] for p in truck)
         truck_profit = sum(p["Förtjänst"] for p in truck)
         print(
-            f"Bil {truck_id + 1}: Vikt = {truck_weight:.1f} kg, Förtjänst = Förtjänst = {truck_profit:.1f}"
+            f"Bil {truck_id + 1}: Vikt = {truck_weight:.1f} kg, Förtjänst = {truck_profit:.1f}."
         )
 
     print(f"\n{remaining_count} st försenade varor kvar.")
-    print(f"Total daglig förtjänst: Total daglig förtjänst: {total_profit:.1f}")
-    print(
-        f"Total straffavgift på grund av förseningar: Total straffavgift på grund av förseningar: {total_penalty:.1f}"
-    )
+    print(f"Total daglig förtjänst: {total_profit:.1f}.")
+    print(f"Total straffavgift på grund av förseningar: {total_penalty:.1f}.")
     print(f"Totalt levererade paket: {total_delivered} paket.")
 
 
