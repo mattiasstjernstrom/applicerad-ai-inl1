@@ -7,11 +7,11 @@ from collections import defaultdict
 
 MAX_WEIGHT = 800
 NUM_TRUCKS = 10
-NUM_ITER = 100
+NUM_ITER = 200  # Öka antalet iterationer
 WEIGHT_PENALTY = 0.01
 DEADLINE_PRIORITY = 1.5
-NO_IMPROVEMENT_LIMIT = 30
-RESTART_LIMIT = 10
+NO_IMPROVEMENT_LIMIT = 50  # Öka stagnationströskeln
+RESTART_LIMIT = 20  # Öka antal omstarter
 MUTATION_RATE = 0.5
 IMPROVEMENT_THRESHOLD = 0.0001
 
@@ -48,8 +48,30 @@ def allocate_packages(packages: list) -> dict:
     return trucks
 
 
+def fill_trucks(trucks: dict, remaining_packages: list):
+    remaining_weights = np.array([p["Vikt"] for p in remaining_packages])
+    remaining_indices = np.argsort(-remaining_weights)
+
+    for truck_id, truck in trucks.items():
+        truck_weight = sum(p["Vikt"] for p in truck)
+        available_space = MAX_WEIGHT - truck_weight
+
+        for idx in remaining_indices:
+            if remaining_weights[idx] <= available_space:
+                package = remaining_packages[idx]
+                trucks[truck_id].append(package)
+                available_space -= package["Vikt"]
+                remaining_weights[idx] = float("inf")  # Mark as used
+
+    remaining_packages = [
+        p
+        for i, p in enumerate(remaining_packages)
+        if remaining_weights[i] != float("inf")
+    ]
+    return trucks, remaining_packages
+
+
 def calculate_fitness(trucks, remaining_packages):
-    # Skapa NumPy-arrayer
     truck_profits = np.array(
         [sum(p["Förtjänst"] for p in truck) for truck in trucks.values()]
     )
@@ -62,18 +84,22 @@ def calculate_fitness(trucks, remaining_packages):
         [p["Deadline"] for p in remaining_packages if p["Deadline"] < 0]
     )
 
-    # Beräkningar
     total_profit = np.sum(truck_profits)
     total_penalty = -np.sum(remaining_deadlines**2)
     used_capacity = np.sum(truck_weights)
     capacity_efficiency = used_capacity / (MAX_WEIGHT * NUM_TRUCKS)
     quick_delivery_bonus = np.sum(profits * (deadlines + 1))
 
+    capacity_bonus = (
+        np.sum(truck_weights / MAX_WEIGHT) * 50
+    )  # Reward for filling trucks
+
     return (
         total_profit
         + total_penalty
         + (capacity_efficiency * 200)
         + (quick_delivery_bonus * 0.5)
+        + capacity_bonus
         - (WEIGHT_PENALTY * len(remaining_packages))
     )
 
@@ -84,18 +110,15 @@ def generate_initial_population(packages, population_size=5):
         random.shuffle(packages)
         trucks = allocate_packages(packages)
         remaining_packages = [p for p in packages if p not in sum(trucks.values(), [])]
+        trucks, remaining_packages = fill_trucks(trucks, remaining_packages)
         fitness = calculate_fitness(trucks, remaining_packages)
         population.append((fitness, (trucks, remaining_packages)))
     return max(population, key=lambda x: x[0])[1]  # Returnerar bästa lösningen
 
 
 def mutate_solution(trucks, remaining_packages, mutation_rate=0.2):
-    """
-    Applicerar mutation genom att flytta flera paket mellan bilar och lagret.
-    """
     for _ in range(int(len(remaining_packages) * mutation_rate)):
         if random.random() < 0.5 and remaining_packages:
-            # Flytta ett paket från lagret till en slumpmässig bil
             package = remaining_packages.pop(
                 random.randint(0, len(remaining_packages) - 1)
             )
@@ -107,7 +130,6 @@ def mutate_solution(trucks, remaining_packages, mutation_rate=0.2):
                     trucks[truck_id].append(package)
                     break
         else:
-            # Flytta ett paket från en slumpmässig bil till lagret
             truck_id = random.choice(list(trucks.keys()))
             if trucks[truck_id]:
                 package = trucks[truck_id].pop(
@@ -145,10 +167,15 @@ def optimize_packages_with_restart(packages: list):
             p for p in all_packages if p not in sum(trucks.values(), [])
         ]
 
-        # Applicera mutation på lösningen
+        trucks, remaining_packages = fill_trucks(trucks, remaining_packages)
+
         trucks, remaining_packages = mutate_solution(
             trucks, remaining_packages, MUTATION_RATE
         )
+
+        trucks, remaining_packages = fill_trucks(
+            trucks, remaining_packages
+        )  # Refill after mutation
 
         fitness = calculate_fitness(trucks, remaining_packages)
 
@@ -166,7 +193,7 @@ def optimize_packages_with_restart(packages: list):
                 f"Stagnation efter {iteration + 1} generationer. Startar om population..."
             )
             random.shuffle(packages)
-            mutation_rate += 0.1  # Öka mutationstakten vid stagnation
+            mutation_rate += 0.1
             trucks, remaining_packages = allocate_packages(packages), []
             restart_counter += 1
 
@@ -232,12 +259,14 @@ def present_results(solution):
         truck_weight = sum(p["Vikt"] for p in truck)
         truck_profit = sum(p["Förtjänst"] for p in truck)
         print(
-            f"Bil {truck_id + 1}: Vikt = {truck_weight:.1f} kg, Förtjänst = {truck_profit:.1f} kr."
+            f"Bil {truck_id + 1}: Vikt = {truck_weight:.1f} kg, Förtjänst = Förtjänst = {truck_profit:.1f}"
         )
 
     print(f"\n{remaining_count} st försenade varor kvar.")
-    print(f"Total daglig förtjänst: {total_profit:.1f} kr.")
-    print(f"Total straffavgift på grund av förseningar: {total_penalty:.1f} kr.")
+    print(f"Total daglig förtjänst: Total daglig förtjänst: {total_profit:.1f}")
+    print(
+        f"Total straffavgift på grund av förseningar: Total straffavgift på grund av förseningar: {total_penalty:.1f}"
+    )
     print(f"Totalt levererade paket: {total_delivered} paket.")
 
 
