@@ -143,6 +143,7 @@ def optimize_with_generations(packages):
             break
 
     visualize_statistics(fitness_history, best_solution[1], best_solution[2])
+    present_results(best_solution[1], best_solution[2])
     return best_solution
 
 
@@ -158,9 +159,45 @@ def visualize_statistics(fitness_history, trucks, remaining_packages):
     truck_weights = [sum(p["Vikt"] for p in truck) for truck in trucks.values()]
     truck_profits = [sum(p["Förtjänst"] for p in truck) for truck in trucks.values()]
 
-    print(f"Remaining Packages: {len(remaining_packages)}")
-    print(f"Total Weight: {sum(truck_weights)}")
-    print(f"Profit: {sum(truck_profits)}")
+    fig, ax1 = plt.subplots()
+    ax1.bar(range(NUM_TRUCKS), truck_weights, label="Weight (kg)", alpha=0.7)
+    ax1.set_xlabel("Trucks")
+    ax1.set_ylabel("Weight (kg)")
+    ax1.legend(loc="upper left")
+
+    ax2 = ax1.twinx()
+    ax2.bar(range(NUM_TRUCKS), truck_profits, label="Profit", alpha=0.7, color="green")
+    ax2.set_ylabel("Profit")
+    ax2.legend(loc="upper right")
+
+    plt.title("Weight and Profit per Truck")
+    plt.show()
+
+
+def present_results(trucks, remaining_packages):
+    total_profit = sum(p["Förtjänst"] for truck in trucks.values() for p in truck)
+    total_weight = sum(p["Vikt"] for truck in trucks.values() for p in truck)
+    total_delivered = sum(len(truck) for truck in trucks.values())
+    remaining_count = len(remaining_packages)
+    remaining_profit = sum(p["Förtjänst"] for p in remaining_packages)
+    total_penalty = sum(
+        -(p["Deadline"] ** 2) for p in remaining_packages if p["Deadline"] < 0
+    )
+
+    print("\nRESULT SUMMARY:")
+    for truck_id, truck in trucks.items():
+        truck_weight = sum(p["Vikt"] for p in truck)
+        truck_profit = sum(p["Förtjänst"] for p in truck)
+        print(
+            f"Truck {truck_id + 1}: Weight = {truck_weight:.1f} kg, Profit = {truck_profit:.1f}"
+        )
+
+    print(f"\nTotal Packages Delivered: {total_delivered}")
+    print(f"Total Profit: {total_profit:.1f}")
+    print(f"Total Weight: {total_weight:.1f} kg")
+    print(f"Remaining Packages: {remaining_count}")
+    print(f"Profit from Remaining Packages: {remaining_profit:.1f}")
+    print(f"Total Penalty: {total_penalty:.1f}")
 
 
 if __name__ == "__main__":
