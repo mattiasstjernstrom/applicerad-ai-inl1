@@ -131,7 +131,7 @@ def restart_population(packages):
     return trucks, remaining_packages
 
 
-def optimize_packages_with_restart(packages):
+def optimize_packages(packages):
     best_fitness = float("-inf")
     best_solution = None
     stagnation_counter = 0
@@ -230,7 +230,7 @@ if __name__ == "__main__":
     file_path = Path("lagerstatus.csv")
     packages = read_data(file_path)
     try:
-        best_solution = optimize_packages_with_restart(packages)
+        best_solution = optimize_packages(packages)
         trucks, remaining_packages = best_solution
         present_results(trucks, remaining_packages)
     except Exception as e:
