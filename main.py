@@ -7,7 +7,7 @@ from collections import defaultdict
 
 MAX_WEIGHT = 800
 NUM_TRUCKS = 10
-NUM_ITER = 10
+NUM_ITER = 100
 WEIGHT_PENALTY = 0.01
 DEADLINE_PRIORITY = 1.5
 NO_IMPROVEMENT_LIMIT = 200
@@ -57,6 +57,37 @@ def calculate_fitness(trucks: dict, remaining_packages: list) -> float:
     return total_profit + total_penalty - (WEIGHT_PENALTY * unused_capacity)
 
 
+def mutate_solution(trucks, remaining_packages, mutation_rate=0.1):
+    """
+    Applicerar mutation på en lösning genom att flytta paket slumpmässigt.
+    """
+    all_packages = sum(trucks.values(), []) + remaining_packages
+    num_packages = len(all_packages)
+
+    if random.random() < mutation_rate:
+        # Flytta ett slumpmässigt paket från en bil till lagret
+        truck_id = random.choice(list(trucks.keys()))
+        if trucks[truck_id]:
+            package = trucks[truck_id].pop(random.randint(0, len(trucks[truck_id]) - 1))
+            remaining_packages.append(package)
+
+    if random.random() < mutation_rate:
+        # Flytta ett slumpmässigt paket från lagret till en bil
+        if remaining_packages:
+            package = remaining_packages.pop(
+                random.randint(0, len(remaining_packages) - 1)
+            )
+            for truck_id in range(NUM_TRUCKS):
+                if (
+                    sum(p["Vikt"] for p in trucks[truck_id]) + package["Vikt"]
+                    <= MAX_WEIGHT
+                ):
+                    trucks[truck_id].append(package)
+                    break
+
+    return trucks, remaining_packages
+
+
 def optimize_packages_with_restart(packages: list):
     best_fitness = float("-inf")
     best_solution = None
@@ -80,6 +111,12 @@ def optimize_packages_with_restart(packages: list):
         remaining_packages = [
             p for p in all_packages if p not in sum(trucks.values(), [])
         ]
+
+        # Applicera mutation på lösningen
+        trucks, remaining_packages = mutate_solution(
+            trucks, remaining_packages, mutation_rate=0.1
+        )
+
         fitness = calculate_fitness(trucks, remaining_packages)
 
         if fitness > best_fitness:
