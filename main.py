@@ -1,188 +1,154 @@
+import csv
 import random
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
+from pathlib import Path
+
+# Konstanter
+MAX_WEIGHT, NUM_TRUCKS, POP_SIZE, NUM_ITER, MUT_RATE, ELITISM = 800, 10, 20, 100, 0.1, 2
+WEIGHT_PENALTY, DEADLINE_PRIORITY = 0.01, 1.5
 
 
-class TruckAssignment:
-    def __init__(
-        self, chromosome: list[int], data: pd.DataFrame, truck_capacity: int
-    ) -> None:
-        self.chromosome = chromosome
-        self.data = data
-        self.truck_capacity = truck_capacity
-        self.fitness = self.calc_fitness()
-
-    def procreate(self, mate: "TruckAssignment") -> "TruckAssignment":
-        new_chromosome = []
-        for gene_1, gene_2 in zip(self.chromosome, mate.chromosome):
-            probability = random.random()
-            if probability < 0.7:
-                new_chromosome.append(gene_1)
-            elif probability < 0.9:
-                new_chromosome.append(gene_2)
-            else:
-                new_chromosome.append(mutated_gene(0, 10))
-        return TruckAssignment(new_chromosome, self.data, self.truck_capacity)
-
-    def calc_fitness(self) -> float:
-        total_weight = np.zeros(10)
-        total_profit = 0
-        penalty = 0
-
-        for idx, truck in enumerate(self.chromosome):
-            if truck > 0:
-                weight = self.data.loc[idx, "Vikt"]
-                profit = self.data.loc[idx, "Förtjänst"] + self.data.loc[idx, "Penalty"]
-                total_weight[truck - 1] += weight
-                if total_weight[truck - 1] > self.truck_capacity:
-                    penalty += (total_weight[truck - 1] - self.truck_capacity) ** 2
-                else:
-                    total_profit += profit
-
-        if any(total_weight > self.truck_capacity):
-            return -1e6
-
-        return total_profit - penalty
-
-    def __str__(self) -> str:
-        return "[ " + (" ".join(map(str, self.chromosome))) + " ]"
-
-
-def mutated_gene(floor: int = 0, ceiling: int = 10) -> int:
-    return random.randint(floor, ceiling)
-
-
-def random_chromosome(
-    length: int, data: pd.DataFrame, truck_capacity: int
-) -> list[int]:
-    chromosome = [0] * length
-    total_weight = np.zeros(10)
-
-    for idx in range(length):
-        possible_trucks = [
-            truck
-            for truck in range(1, 11)
-            if total_weight[truck - 1] + data.loc[idx, "Vikt"] <= truck_capacity
-        ]
-        if possible_trucks:
-            chosen_truck = random.choice(possible_trucks)
-            chromosome[idx] = chosen_truck
-            total_weight[chosen_truck - 1] += data.loc[idx, "Vikt"]
-
-    return chromosome
-
-
-def genetic_algorithm(
-    data: pd.DataFrame,
-    truck_capacity: int,
-    generations: int = 100,
-    population_size: int = 50,
-):
-    population = [
-        TruckAssignment(
-            random_chromosome(len(data), data, truck_capacity), data, truck_capacity
+# Läs data
+def read_data(file_path: Path) -> np.ndarray:
+    with file_path.open("r", encoding="utf-8") as file:
+        return np.array(
+            [
+                [
+                    int(row["Paket_id"]),
+                    float(row["Vikt"]),
+                    int(row["Förtjänst"]),
+                    int(row["Deadline"]),
+                ]
+                for row in csv.DictReader(file)
+            ]
         )
-        for _ in range(population_size)
-    ]
-    best_solution = None
-
-    for generation in range(generations):
-        population.sort(key=lambda x: x.fitness, reverse=True)
-        if best_solution is None or population[0].fitness > best_solution.fitness:
-            best_solution = population[0]
-
-        survivor_size = population_size // 10
-        new_generation = population[:survivor_size]
-
-        while len(new_generation) < population_size:
-            parent1, parent2 = random.sample(population[:survivor_size], 2)
-            child = parent1.procreate(parent2)
-            new_generation.append(child)
-
-        population = new_generation
-
-        print(f"Generation {generation + 1}, Best Fitness: {best_solution.fitness}")
-
-    return best_solution
 
 
-def calculate_statistics(data: pd.DataFrame, solution: TruckAssignment):
-    assigned_packages = data[np.array(solution.chromosome) > 0]
-    unassigned_packages = data[np.array(solution.chromosome) == 0]
+# Tilldelning av paket
+def allocate_packages(packages: np.ndarray):
+    packages = packages[np.lexsort((-packages[:, 2], packages[:, 3]))]
+    trucks = [np.empty((0, packages.shape[1])) for _ in range(NUM_TRUCKS)]
+    truck_weights = np.zeros(NUM_TRUCKS)
+    for package in packages:
+        for truck_id in range(NUM_TRUCKS):
+            if truck_weights[truck_id] + package[1] <= MAX_WEIGHT:
+                trucks[truck_id] = np.vstack([trucks[truck_id], package])
+                truck_weights[truck_id] += package[1]
+                break
+    return trucks, packages[~np.isin(packages[:, 0], np.vstack(trucks)[:, 0])]
 
-    # Vikt och förtjänst statistik
-    assigned_weight = assigned_packages["Vikt"].sum()
-    assigned_profit = assigned_packages["Förtjänst"].sum()
 
-    unassigned_weight = unassigned_packages["Vikt"].sum()
-    unassigned_profit = unassigned_packages["Förtjänst"].sum()
-
-    print(f"Total förtjänst för levererade paket: {assigned_profit}")
-    print(f"Antal paket kvar i lager: {len(unassigned_packages)}")
-    print(f"Totalt vikt kvar i lager: {unassigned_weight}")
-    print(f"Totalt förtjänst kvar i lager: {unassigned_profit}")
-
-    # Histogram
-    plt.hist(assigned_packages["Vikt"], bins=10, alpha=0.7, label="Vikt - Levererade")
-    plt.hist(
-        unassigned_packages["Vikt"], bins=10, alpha=0.7, label="Vikt - Kvar i lager"
+# Beräkning av fitness
+def calculate_fitness(trucks, remaining):
+    delayed_packages = remaining[remaining[:, 3] < 0]
+    profit = sum(np.sum(truck[:, 2]) for truck in trucks if truck.size)
+    penalty = -np.sum(delayed_packages[:, 3] ** 2) if delayed_packages.size else 0
+    unused = sum(
+        WEIGHT_PENALTY * (MAX_WEIGHT - np.sum(truck[:, 1]))
+        for truck in trucks
+        if truck.size
     )
+    return profit + penalty - unused
+
+
+# Initial population
+def init_population(packages):
+    return [np.random.permutation(packages) for _ in range(POP_SIZE)]
+
+
+# Mutation
+def mutate(solution, rate):
+    for _ in range(max(1, int(len(solution) * rate))):
+        idx = np.random.choice(len(solution), 2, replace=False)
+        solution[idx[0]], solution[idx[1]] = solution[idx[1]], solution[idx[0]]
+    return solution
+
+
+# Statistik
+def show_statistics(trucks, remaining):
+    weights, profits = [np.sum(truck[:, 1]) for truck in trucks if truck.size], [
+        np.sum(truck[:, 2]) for truck in trucks if truck.size
+    ]
+    plt.figure(figsize=(10, 6))
+    plt.bar(
+        range(1, NUM_TRUCKS + 1), weights, label="Vikt (kg)", alpha=0.7, color="blue"
+    )
+    plt.bar(
+        range(1, NUM_TRUCKS + 1),
+        profits,
+        label="Förtjänst (kr)",
+        alpha=0.7,
+        color="green",
+        bottom=weights,
+    )
+    plt.xlabel("Budbilar")
+    plt.ylabel("Värde")
+    plt.title("Vikt och Förtjänst per Budbil")
     plt.legend()
+    plt.tight_layout()
     plt.show()
 
 
-def print_results(data: pd.DataFrame, solution: TruckAssignment, truck_capacity: int):
-    # Skapa statistik
-    total_weight = np.zeros(10)
-    total_profit = np.zeros(10)
-    delivered_packages = 0
-
-    for idx, truck in enumerate(solution.chromosome):
-        if truck > 0:
-            weight = data.loc[idx, "Vikt"]
-            profit = data.loc[idx, "Förtjänst"] + data.loc[idx, "Penalty"]
-            total_weight[truck - 1] += weight
-            total_profit[truck - 1] += profit
-            delivered_packages += 1
-
-    # Paket som ej levererades
-    unassigned_packages = data[np.array(solution.chromosome) == 0]
-    delayed_count = len(unassigned_packages)
-    delayed_profit = unassigned_packages["Förtjänst"].sum()
-    penalty_sum = unassigned_packages["Penalty"].sum()
-
-    # Skriv ut detaljer per bil
-    print("Optimering avslutas efter X generationer (upprepade små förbättringar).\n")
-    for truck_id in range(10):
-        print(
-            f"Bil {truck_id + 1}: Vikt = {total_weight[truck_id]:.1f} kg, "
-            f"Förtjänst = {int(total_profit[truck_id])} kr."
-        )
-
-    # Sammanställning av totala resultat
-    print(f"\n{delayed_count} st försenade varor kvar.")
-    print(f"Total daglig förtjänst: {int(total_profit.sum())} kr.")
-    print(f"Total straffavgift på grund av förseningar: {int(penalty_sum)} kr.")
-    actual_profit = int(total_profit.sum() + penalty_sum)
-    print(f"Faktisk vinst: {actual_profit} kr.")
-    print(f"Totalt levererade paket: {delivered_packages} paket.")
-
-
-if __name__ == "__main__":
-    # Läs in lagerstatus
-    file_path = "lagerstatus.csv"
-    data = pd.read_csv(file_path)
-    data["Penalty"] = data["Deadline"].apply(lambda d: -((abs(d)) ** 2) if d < 0 else 0)
-
-    TRUCK_CAPACITY = 800
-    POPULATION_SIZE = 100
-    GENERATIONS = 10
-
-    # Kör genetisk algoritm
-    best_solution = genetic_algorithm(
-        data, TRUCK_CAPACITY, GENERATIONS, POPULATION_SIZE
+def present_results(trucks, remaining):
+    print("\nRESULTATREDOVISNING:")
+    total_profit = 0
+    total_weight = 0
+    for i, truck in enumerate(trucks):
+        if truck.size:
+            truck_weight = np.sum(truck[:, 1])
+            truck_profit = np.sum(truck[:, 2])
+            total_weight += truck_weight
+            total_profit += truck_profit
+            print(
+                f"Bil {i + 1}: Vikt = {truck_weight:.1f} kg, Förtjänst = {truck_profit:.1f} kr."
+            )
+    remaining_count = len(remaining)
+    remaining_weight = np.sum(remaining[:, 1]) if remaining.size else 0
+    total_penalty = (
+        -np.sum(remaining[remaining[:, 3] < 0, 3] ** 2) if remaining.size else 0
     )
+    actual_profit = total_profit + total_penalty
+    print(f"\n{remaining_count} st försenade varor kvar.")
+    print(f"Total daglig förtjänst: {total_profit:.1f} kr.")
+    print(f"Total straffavgift på grund av förseningar: {total_penalty:.1f} kr.")
+    print(f"Faktisk vinst: {actual_profit:.1f} kr.")
+    print(f"Totalt levererade paket: {sum(len(truck) for truck in trucks)} paket.")
 
-    # Skriv ut resultaten
-    print_results(data, best_solution, TRUCK_CAPACITY)
+
+# Optimering
+def optimize(packages):
+    population, best_fitness, tracker = init_population(packages), float("-inf"), []
+    for iteration in range(NUM_ITER):
+        fitness_population = []
+        for solution in population:
+            trucks, remaining = allocate_packages(solution)
+            fitness = calculate_fitness(trucks, remaining)
+            fitness_population.append((fitness, solution))
+            if fitness > best_fitness:
+                best_fitness, best_solution = fitness, (trucks, remaining)
+        tracker.append(best_fitness)
+        print(f"Iteration {iteration + 1}: Best Fitness = {best_fitness}")
+        fitness_population.sort(reverse=True, key=lambda x: x[0])
+        next_gen = [sol for _, sol in fitness_population[:ELITISM]]
+        while len(next_gen) < POP_SIZE:
+            parent = random.choice(fitness_population[: POP_SIZE // 2])[1]
+            next_gen.append(mutate(parent.copy(), MUT_RATE))
+        population = next_gen
+        if len(tracker) > 10 and all(
+            abs(tracker[-1] - tracker[-i]) < 0.0001 for i in range(1, 11)
+        ):
+            print(
+                "Optimeringen avstannar efter {iteration + 1} generationer (upprepade små förbättringar)."
+            )
+            break
+    show_statistics(*best_solution)
+    present_results(*best_solution)
+    return tracker
+
+
+# Main
+if __name__ == "__main__":
+    file_path = Path("lagerstatus.csv")
+    packages = read_data(file_path)
+    optimize(packages)
