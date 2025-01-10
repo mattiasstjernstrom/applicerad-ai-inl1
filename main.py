@@ -131,7 +131,7 @@ def restart_population(packages):
     return trucks, remaining_packages
 
 
-def optimize_packages(packages):
+def optimize_packages_with_restart(packages):
     best_fitness = float("-inf")
     best_solution = None
     stagnation_counter = 0
@@ -198,7 +198,29 @@ def plot_fitness(fitness_values):
     plt.show()
 
 
+def visualize_solution(trucks):
+    truck_weights = calculate_all(trucks, "Vikt")
+    truck_profits = calculate_all(trucks, "Förtjänst")
+
+    ind = np.arange(len(trucks))
+    width = 0.35
+
+    plt.bar(ind, truck_weights, width, label="Vikt", alpha=0.7, color="blue")
+    plt.bar(
+        ind + width, truck_profits, width, label="Förtjänst", alpha=0.7, color="green"
+    )
+    plt.xlabel("Lastbilar")
+    plt.ylabel("Värden")
+    plt.title("Vikt och förtjänst per lastbil")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+
 def present_results(trucks, remaining_packages):
+    total_packages = sum(len(truck) for truck in trucks.values()) + len(
+        remaining_packages
+    )
     total_profit = sum(p["Förtjänst"] for truck in trucks.values() for p in truck)
     total_weight = sum(p["Vikt"] for truck in trucks.values() for p in truck)
     total_delivered = sum(len(truck) for truck in trucks.values())
@@ -217,6 +239,7 @@ def present_results(trucks, remaining_packages):
         )
 
     print("\nSTATISTIK:")
+    print(f"Totalt antal paket: {total_packages} paket.")
     print(f"Total daglig förtjänst: {total_profit:.0f}")
     print(f"Totalt levererade paket: {total_delivered} paket.")
     print(f"Total straffavgift på grund av förseningar: {total_penalty:.0f}")
@@ -225,12 +248,14 @@ def present_results(trucks, remaining_packages):
         f"Totala kvarvarande förtjänsten i lager (exkl. straff): {remaining_total_profit:.0f}"
     )
 
+    visualize_solution(trucks)
+
 
 if __name__ == "__main__":
     file_path = Path("lagerstatus.csv")
     packages = read_data(file_path)
     try:
-        best_solution = optimize_packages(packages)
+        best_solution = optimize_packages_with_restart(packages)
         trucks, remaining_packages = best_solution
         present_results(trucks, remaining_packages)
     except Exception as e:
